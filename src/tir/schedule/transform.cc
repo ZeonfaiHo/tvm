@@ -429,5 +429,65 @@ PrimExpr BlockBufferAccessSimplifier::VisitExpr_(const BufferLoadNode* op) {
   return std::move(node);
 }
 
+/******** PrimFunc-level analysis and transformation ********/
+
+Optional<ObjectRef> NormalizePrimFunc(Schedule sch) {
+  BlockRV root_block = sch->GetBlock("root");
+  Array<BlockRV> blocks = sch->GetChildBlocks(root_block);
+  for (const BlockRV& block : blocks) {
+    StmtSRef block_sref = sch->GetSRef(block);
+    Array<StmtSRef> loops = GetLoops(block_sref);
+    Array<PrimExpr> binds = GetBlockRealize(sch->state(), block_sref)->iter_values;
+    if (loops.size() != binds.size()) {
+      return NullOpt;
+    }
+    for (int i = 0, n = loops.size(); i < n; ++i) {
+      const ForNode* loop = TVM_SREF_TO_FOR(loops[i]);
+      if (binds[i].get() != loop->loop_var.get()) {
+        return NullOpt;
+      }
+      if (!is_zero(loop->min)) {
+        return NullOpt;
+      }
+    }
+  }
+  Array<Array<LoopRV>> block_loops;
+  Array<Array<IterVar>> block_iters;
+  Array<IntImm> block_is_reduction;
+  for (const BlockRV& block : blocks) {
+    Array<IterVar> iters = sch->Get(block)->iter_vars;
+    bool has_spatial_iter = false;
+    Array<Var> index_map_inputs;
+    Array<PrimExpr> index_map_outputs;
+    for (const IterVar& iter : sch->Get(block)->iter_vars) {
+      Var var = iter->var.copy_with_suffix("");
+      index_map_inputs.push_back(var);
+      if (!is_one(iter->dom->extent)) {
+        index_map_outputs.push_back(var);
+        if (iter->iter_type == IterVarType::kDataPar) {
+          has_spatial_iter = true;
+        }
+      }
+    }
+    if (index_map_outputs.empty() || !has_spatial_iter) {
+      index_map_outputs.insert(index_map_outputs.begin(), tir::make_const(DataType::Int(64), 0));
+    }
+    try {
+      sch->TransformBlockLayout(block, IndexMap(index_map_inputs, index_map_outputs));
+    } catch (tvm::runtime::Error& e) {
+      // Skip layout transformation when not transformable.
+    }
+    block_loops.push_back(sch->GetLoops(block));
+    block_iters.push_back(sch->Get(block)->iter_vars);
+    bool is_reduction = IsReductionBlock(sch->state(),         //
+                                         sch->GetSRef(block),  //
+                                         sch->GetSRef(root_block));
+    block_is_reduction.push_back(Bool(is_reduction));
+  }
+  return Array<ObjectRef>{blocks, block_loops, block_iters, block_is_reduction};
+}
+
+TVM_REGISTER_GLOBAL("tir.schedule.NormalizePrimFunc").set_body_typed(NormalizePrimFunc);
+
 }  // namespace tir
 }  // namespace tvm

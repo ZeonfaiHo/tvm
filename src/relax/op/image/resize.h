@@ -17,20 +17,27 @@
  * under the License.
  */
 
-import commonjs from '@rollup/plugin-commonjs';
-import resolve from '@rollup/plugin-node-resolve';
+/*!
+ * \file resize.h
+ * \brief The functions to make Relax image resize operator calls.
+ */
 
-export default {
-  input: 'dist/index.js',
-  output: {
-    file: 'dist/tvmjs.bundle.js',
-    format: 'umd',
-    name: 'tvmjs',
-    exports: 'named',
-    globals: {'ws': 'ws',
-              'perf_hooks': 'perf_hooks',
-              '@webgpu/types': 'webgputypes'}
-  },
-  plugins: [commonjs(), resolve()],
-  external: ['ws', 'perf_hooks', '@webgpu/types']
-};
+#ifndef TVM_RELAX_OP_IMAGE_RESIZE_H_
+#define TVM_RELAX_OP_IMAGE_RESIZE_H_
+
+#include <tvm/relax/attrs/image.h>
+
+#include "../op_common.h"
+
+namespace tvm {
+namespace relax {
+
+/*! \brief Image resize2d operator. */
+Expr resize2d(Expr data, Expr size, Array<FloatImm> roi, String layout, String method,
+              String coordinate_transformation_mode, String rounding_method, double cubic_alpha,
+              int cubic_exclude, double extrapolation_value, DataType out_dtype);
+
+}  // namespace relax
+}  // namespace tvm
+
+#endif  // TVM_RELAX_OP_IMAGE_RESIZE_H_

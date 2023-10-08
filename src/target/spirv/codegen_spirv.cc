@@ -776,8 +776,6 @@ void CodeGenSPIRV::VisitStmt_(const IfThenElseNode* op) {
   builder_->StartLabel(merge_label);
 }
 
-void CodeGenSPIRV::VisitStmt_(const DeclBufferNode* op) { VisitStmt(op->body); }
-
 void CodeGenSPIRV::VisitStmt_(const AllocateNode* op) {
   ICHECK(!is_zero(op->condition));
   ICHECK(!op->dtype.is_handle());
@@ -837,6 +835,8 @@ void CodeGenSPIRV::VisitStmt_(const AllocateNode* op) {
   var_map_[op->buffer_var.get()] = buf;
   this->VisitStmt(op->body);
 }
+
+void CodeGenSPIRV::VisitStmt_(const DeclBufferNode* op) { this->VisitStmt(op->body); }
 
 void CodeGenSPIRV::VisitStmt_(const AttrStmtNode* op) {
   if (op->attr_key == tir::attr::thread_extent) {

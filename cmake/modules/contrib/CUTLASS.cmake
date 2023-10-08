@@ -16,11 +16,13 @@
 # under the License.
 
 if(USE_CUDA AND USE_CUTLASS)
-  tvm_file_glob(GLOB CUTLASS_RELAY_CONTRIB_SRC src/relay/backend/contrib/cutlass/*.cc)
-  list(APPEND COMPILER_SRCS ${CUTLASS_RELAY_CONTRIB_SRC})
+  tvm_file_glob(GLOB CUTLASS_CONTRIB_SRC src/relay/backend/contrib/cutlass/*.cc src/relax/backend/contrib/cutlass/*.cc)
+  list(APPEND COMPILER_SRCS ${CUTLASS_CONTRIB_SRC})
 
   set(CUTLASS_DIR ${PROJECT_SOURCE_DIR}/3rdparty/cutlass)
   add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/cutlass_fpA_intB_gemm)
+  add_subdirectory(${PROJECT_SOURCE_DIR}/3rdparty/libflash_attn)
+  list(APPEND RUNTIME_SRCS src/runtime/contrib/cutlass/weight_preprocess.cc)
 
   message(STATUS "Build with CUTLASS")
 endif()

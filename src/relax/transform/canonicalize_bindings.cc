@@ -1,0 +1,141 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+/*!
+ * \file src/relax/transform/canonicalize_bindings.cc
+ * \brief Pass for simplifying modules by folding var bindings and match shape nodes.
+ *        May include other forms of simplification in the future.
+ *        Ideally should be used before constant folding and eliminating unused bindings.
+ */
+
+#include <tvm/relax/expr.h>
+#include <tvm/relax/expr_functor.h>
+#include <tvm/relax/struct_info.h>
+#include <tvm/relax/transform.h>
+
+namespace tvm {
+namespace relax {
+
+class BindingCanonicalizer : public ExprMutator {
+ public:
+  BindingCanonicalizer() {}
+
+  using ExprMutator::VisitExpr_;
+
+  Expr VisitExpr_(const TupleGetItemNode* tuple_get_item) override {
+    if (auto tuple_var = tuple_get_item->tuple.as<Var>()) {
+      if (auto tuple_value = LookupBinding(tuple_var.value())) {
+        if (auto explicit_tuple = tuple_value.as<TupleNode>()) {
+          CHECK_GE(tuple_get_item->index, 0)
+              << "Tuple " << tuple_value << " is accessed at index " << tuple_get_item->index
+              << ", but negative indices are not supported in this context.";
+          CHECK_LT(tuple_get_item->index, explicit_tuple->fields.size())
+              << "Tuple " << tuple_value << " is accessed at index " << tuple_get_item->index
+              << ", but the tuple size is only " << explicit_tuple->fields.size();
+          return VisitExpr(explicit_tuple->fields[tuple_get_item->index]);
+        }
+      }
+    }
+    return ExprMutator::VisitExpr_(tuple_get_item);
+  }
+
+  void VisitBinding_(const VarBindingNode* binding) override {
+    // Unlike default visitor, we do not permit the checked type to change
+    // if the new value's checked type is different (this preserves user annotations)
+    Expr new_value = this->VisitExpr(binding->value);
+    Var new_var = this->VisitVarDef(binding->var);
+
+    if (auto opt_var = new_value.as<Var>();
+        opt_var && CanCanonicalizeVar(new_var, opt_var.value())) {
+      var_remap_[new_var->vid] = opt_var.value();
+    } else if (new_var.same_as(binding->var) && new_value.same_as(binding->value)) {
+      this->builder_->EmitNormalized(GetRef<VarBinding>(binding));
+    } else {
+      this->builder_->EmitNormalized(VarBinding(new_var, new_value));
+    }
+  }
+
+  void VisitBinding_(const MatchCastNode* binding) override {
+    // If we have a trivial shape check (the shape_ of LHS and RHS is the same),
+    // we can canonicalize to a var binding
+    Expr new_value = this->VisitExpr(binding->value);
+
+    bool has_same_struct_info = StructuralEqual()(binding->struct_info, GetStructInfo(new_value));
+
+    if (has_same_struct_info) {
+      if (auto parent = new_value.as<Var>();
+          parent && CanCanonicalizeVar(binding->var, parent.value())) {
+        // LHS and RHS have the same struct info, and occur in a
+        // context where the RHS can replace the LHS.
+        var_remap_[binding->var->vid] = parent.value();
+      } else {
+        // LHS and RHS have the same struct info, but the RHS is not a
+        // drop-in replacement for the LHS.
+        builder_->EmitNormalized(VarBinding(binding->var, new_value));
+      }
+    } else if (new_value.same_as(binding->value)) {
+      builder_->EmitNormalized(GetRef<MatchCast>(binding));
+    } else {
+      builder_->EmitNormalized(MatchCast(binding->var, new_value, binding->struct_info));
+    }
+  }
+
+ private:
+  bool AnnotationsDiffer(const ObjectRef& obj1, const ObjectRef& obj2,
+                         std::function<bool(const ObjectRef&, const ObjectRef&)> check_eq) {
+    // annotations differ if one is present but not the other
+    // or they're both present and they differ
+    bool both_present = obj1.defined() && obj2.defined();
+    bool neither_present = !obj1.defined() && !obj2.defined();
+    return !(both_present || neither_present) || (both_present && !check_eq(obj1, obj2));
+  }
+
+  bool CanCanonicalizeVar(Var var, Var parent_var) {
+    // Cases when we conservatively do not unify:
+    // 1. checked_type_ or shape_ of the child differs from that of the parent
+    //    In this case, we could be overriding user annotations.
+    // 2. If the child is a Var and the parent is a DataflowVar.
+    //    That could result in a DataflowVar leaving the current DataflowBlock.
+    bool annotations_differ = AnnotationsDiffer(var->struct_info_, parent_var->struct_info_,
+                                                [&](const ObjectRef& lhs, const ObjectRef& rhs) {
+                                                  return tvm::StructuralEqual()(lhs, rhs);
+                                                });
+    bool var_to_dataflow = (!var.as<DataflowVarNode>() && parent_var.as<DataflowVarNode>());
+    return !annotations_differ && !var_to_dataflow;
+  }
+};
+
+Expr CanonicalizeBindings(const Expr& e) { return BindingCanonicalizer().VisitExpr(e); }
+
+namespace transform {
+
+Pass CanonicalizeBindings() {
+  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
+      [=](Function f, IRModule m, PassContext pc) {
+        return Downcast<Function>(CanonicalizeBindings(f));
+      };
+  return CreateFunctionPass(pass_func, 1, "CanonicalizeBindings", {});
+}
+
+TVM_REGISTER_GLOBAL("relax.transform.CanonicalizeBindings").set_body_typed(CanonicalizeBindings);
+
+}  // namespace transform
+
+}  // namespace relax
+}  // namespace tvm
