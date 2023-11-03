@@ -58,27 +58,37 @@ mnist_func = build_mnist_func(tvm.relay.var("data", shape=(1, 784)),
                               tvm.relay.Constant(nd_params['b0']),
                               tvm.relay.Constant(nd_params['w1']),
                               tvm.relay.Constant(nd_params['b1']))
-add_gvar_main = tvm.relay.GlobalVar("main")
-mod = tvm.IRModule({add_gvar_main: mnist_func})
+# add_gvar_main = tvm.relay.GlobalVar("main")
+# mod = tvm.IRModule({add_gvar_main: mnist_func})
+mod = IRModule.from_expr(mnist_func)
 
 """
-编译模型
+graph_executor编译模型，执行推理
 """
-
 # lib = tvm.relay.build(mod, target='cuda')
 # # lib.export_library('compiled_model.tar')
 # rt_mod = tvm.contrib.graph_executor.GraphModule(lib["default"](tvm.cuda()))
 
-# graph, lib, params = tvm.relay.build(mod, target='llvm')
 lib = tvm.relay.build(mod, target='llvm')
-lib.export_library('compiled_model.tar')
-# print(lib.get_source())
 rt_mod = tvm.contrib.graph_executor.GraphModule(lib["default"](tvm.cpu()))
 
 rt_mod.set_input("data", tvm.nd.array(img.astype("float32")))
 rt_mod.run()
 
 out = rt_mod.get_output(0)
+
+"""
+relay.vm
+"""
+# import tvm.runtime
+
+# exe = tvm.relay.vm.compile(mod, target='llvm')
+# vm = tvm.runtime.vm.VirtualMachine(exe, tvm.cpu())
+
+# vm.set_input('main', tvm.nd.array(img.astype("float32")))
+
+# out = vm.invoke("main")
+
 out_np = out.asnumpy()
 print('Output: ' + str(out_np))
 pred = out_np.argmax()

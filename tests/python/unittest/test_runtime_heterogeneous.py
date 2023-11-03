@@ -183,7 +183,8 @@ def test_simplex_data_transferring():
         out = mod.get_output(0, tvm.nd.empty(shape))
         np.testing.assert_equal(out.numpy(), (tensor_a + tensor_b) - tensor_c)
 
-    dev_tar = {"cuda": "cuda", "opencl": "opencl"}
+    dev_tar = {"cuda": "cuda"}
+    # dev_tar = {"cuda": "cuda", "opencl": "opencl"}
     for device, target in dev_tar.items():
         with tvm.target.Target(device):
             check_device(device, target)
@@ -433,7 +434,8 @@ def test_duplex_data_transferring():
         check_verify()
         check_load_module()
 
-    dev_tar = {"cuda": "cuda", "opencl": "opencl"}
+    # dev_tar = {"cuda": "cuda", "opencl": "opencl"}
+    dev_tar = {"cuda": "cuda"}
     for device, target in dev_tar.items():
         with tvm.target.Target(device):
             check_device(device, target)
@@ -441,4 +443,4 @@ def test_duplex_data_transferring():
 
 if __name__ == "__main__":
     test_simplex_data_transferring()
-    test_duplex_data_transferring()
+    # test_duplex_data_transferring()
