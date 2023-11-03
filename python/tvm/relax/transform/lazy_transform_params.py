@@ -17,9 +17,8 @@
 # pylint: disable=invalid-name, unused-argument, missing-function-docstring, abstract-method
 """Relax LazyTransformParams pass."""
 import tvm
-from tvm import IRModule
-from tvm import relax
-from tvm.relax.expr_functor import visitor, mutator, PyExprMutator, PyExprVisitor
+from tvm import IRModule, relax
+from tvm.relax.expr_functor import PyExprMutator, PyExprVisitor, mutator, visitor
 
 
 @visitor
@@ -153,8 +152,8 @@ class LazyTransformParamsMutator(PyExprMutator):
         params = []
         symbolic_vars = relax.analysis.defined_symbolic_vars(func)
         if symbolic_vars:
-            for param in self.input_tuple_param:
-                sinfo = param.struct_info
+            # direct iterate over the struct info annotation
+            for sinfo in self.input_tuple_param.struct_info.fields:
                 if not isinstance(sinfo, relax.TensorStructInfo):
                     params.append(relax.Var("symbolic_var_holder", sinfo))
 
@@ -228,7 +227,7 @@ class LazyTransformParams:
 
     def transform_module(self, mod: IRModule, ctx: tvm.transform.PassContext) -> IRModule:
         lazy_mutator = LazyTransformParamsMutator(mod)
-        for gv in mod.functions:
+        for gv, _ in mod.functions_items():
             if gv.name_hint.endswith("transform_params"):
                 func = mod[gv]
                 if not isinstance(func, relax.Function):
