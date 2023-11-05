@@ -39,12 +39,12 @@ def build_mnist_func(data: relay.Var,
                      w1: relay.Constant,
                      b1: relay.Constant):
     lv0 = relay.nn.matmul(data, w0, transpose_b=True)
-    lv0_cuda = relay.annotation.on_device(lv0, tvm.cuda())
-    lv1 = relay.nn.bias_add(lv0_cuda, b0)
+    # lv0 = relay.annotation.on_device(lv0, tvm.cuda())
+    lv1 = relay.nn.bias_add(lv0, b0)
     lv2 = relay.nn.relu(lv1)
     lv3 = relay.nn.matmul(lv2, w1, transpose_b=True)
-    lv3_cuda = relay.annotation.on_device(lv3, tvm.cuda())
-    lv4 = relay.nn.bias_add(lv3_cuda, b1)
+    # lv3 = relay.annotation.function_on_device(lv3, tvm.cuda())
+    lv4 = relay.nn.bias_add(lv3, b1)
     output = lv4
 
     return relay.Function([data], output, ret_type=type_annotation)
@@ -62,7 +62,31 @@ mnist_func = build_mnist_func(
 add_gvar_main = relay.GlobalVar("main")
 mod = tvm.IRModule({add_gvar_main: mnist_func})
 
-print(mod)
+#标注device
+def annotate_device(expr: relay.Expr):
+    """递归遍历表达式并标注所有conv2d算子"""
+    if isinstance(expr, relay.Call):
+        # 为conv2d算子添加CUDA注解
+        new_args = [annotate_device(arg) for arg in expr.args]
+        new_expr = relay.Call(expr.op, new_args, expr.attrs)
+        if expr.op.name == "nn.relu":
+            return relay.annotation.on_device(new_expr, tvm.cuda())
+        else:
+            return relay.annotation.on_device(new_expr, tvm.cpu())
+    else:
+        return expr
+
+# 获取main函数
+main_func = mod["main"]
+main_func_expr = main_func.body
+print('Original main function:\n' + str(main_func_expr))
+
+# 标注device
+new_main_func = annotate_device(main_func_expr)
+print('New main function:\n' + str(new_main_func))
+mod = tvm.IRModule.from_expr(new_main_func)
+
+print('Transformed IRModule: ' + str(mod))
 
 # 定义目标
 targets = {
@@ -71,8 +95,9 @@ targets = {
 }
 
 # 构建模型
-
-lib = relay.build(mod, target=targets)
+# with tvm.transform.PassContext(opt_level=0, disabled_pass=['FuseOps', ]):
+with tvm.transform.PassContext(opt_level=0):
+    lib = relay.build(mod, target=targets)
 
 # 运行
 

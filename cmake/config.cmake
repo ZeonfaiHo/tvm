@@ -318,7 +318,7 @@ set(USE_CLML_GRAPH_EXECUTOR OFF)
 set(USE_ANTLR OFF)
 
 # Whether use Relay debug mode
-set(USE_RELAY_DEBUG OFF)
+set(USE_RELAY_DEBUG ON)
 
 # Whether to build fast VTA simulator driver
 set(USE_VTA_FSIM OFF)
