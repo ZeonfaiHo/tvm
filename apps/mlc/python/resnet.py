@@ -73,6 +73,9 @@ mod, params = relay.frontend.from_onnx(onnx_model, shape_dict)
 
 #标注device
 cached_expr = dict()
+do_not_touch = []
+on_cpu = ['nn.conv2d', 'nn.relu', 'add', 'nn.batch_norm']
+# on_cpu = ['nn.conv2d', 'nn.relu', 'nn.batch_norm', 'add']
 
 def annotate_device(expr: relay.Expr):
     """递归遍历表达式并标注所有conv2d算子"""
@@ -81,23 +84,31 @@ def annotate_device(expr: relay.Expr):
 
     print(type(expr))
 
-    if isinstance(expr, relay.Call):
+    if isinstance(expr, relay.expr.Call):
+        expr: relay.expr.Call
         # 为conv2d算子添加CUDA注解
         new_args = [annotate_device(arg) for arg in expr.args]
-        new_expr = relay.Call(expr.op, new_args, expr.attrs)
-        if expr.op.name in ["nn.conv2d", 'nn.relu', 'nn.batch_norm']:
-            new_expr = relay.annotation.on_device(new_expr, tvm.cuda())
-        else:
+        new_expr = relay.Call(expr.op, new_args, expr.attrs, expr.type_args, expr.span)
+        if expr.op.name in do_not_touch:
+            pass
+        elif expr.op.name in on_cpu:
             new_expr = relay.annotation.on_device(new_expr, tvm.cpu())
+        else:
+            new_expr = relay.annotation.on_device(new_expr, tvm.cuda())
     elif isinstance(expr, relay.expr.TupleGetItem):
         expr: relay.expr.TupleGetItem
         new_value = annotate_device(expr.tuple_value)
-        new_expr = relay.expr.TupleGetItem(new_value, expr.index)
+        new_expr = relay.expr.TupleGetItem(new_value.args[0], expr.index, expr.span)
+        if new_value.args[0].op.name in on_cpu:
+            new_expr = relay.annotation.on_device(new_expr, tvm.cpu())
+        else:
+            new_expr = relay.annotation.on_device(new_expr, tvm.cuda())
     else:
         new_expr = expr
     
     cached_expr[expr] = new_expr
     return new_expr
+
 
 # 获取main函数
 main_func = mod["main"]
